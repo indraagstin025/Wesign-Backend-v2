@@ -1,0 +1,2347 @@
+openapi: 3.0.3
+
+info:
+  title: WeSign API
+  version: 2.0.0
+  description: |
+    # WeSign — Platform Tanda Tangan Elektronik Tidak Tersertifikasi
+
+    API untuk platform tanda tangan elektronik PDF sesuai Pasal 11 Ayat 1 UU ITE.
+
+    ## Karakteristik API
+    - **Base URL:** `/api/v1`
+    - **Format:** JSON
+    - **Autentikasi:** Bearer JWT
+    - **Rate Limiting:** Per-endpoint (lihat header response)
+
+    ## Model Penandatanganan
+    - **Personal Signing** — pemilik dokumen tanda tangan sendiri
+    - **Package Signing** — beberapa dokumen dalam satu sesi
+    - **Multi-Signer Sequential** — undangan berurutan (max 5 signer)
+
+    ## Disclaimer Hukum
+    WeSign menghasilkan TTE Tidak Tersertifikasi. Bukan pengganti TTE Tersertifikasi dari PSrE terdaftar.
+
+    ## Referensi
+    - URD: `docs/URD-WeSign-v2.md`
+    - PRD: `docs/PRD-WeSign-v2.md`
+    - SRS: `docs/SRS-WeSign-v2.md`
+    - TDD: `docs/TDD-WeSign-v2.md`
+
+  contact:
+    name: WeSign Engineering
+    email: engineering@wesign.id
+    url: https://wesign.id
+
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.wesign.id/api/v1
+    description: Production
+  - url: https://staging-api.wesign.id/api/v1
+    description: Staging
+  - url: http://localhost:8080/api/v1
+    description: Development
+
+tags:
+  - name: Auth
+    description: Registrasi, login, verifikasi email, MFA
+  - name: Documents
+    description: Upload, kelola, dan download dokumen PDF
+  - name: Packages
+    description: Package signing (bulk self-signing)
+  - name: Signing
+    description: Personal signing dan multi-signer sequential
+  - name: Verification
+    description: Verifikasi publik dokumen
+  - name: Assets
+    description: Manajemen aset tanda tangan (gambar, inisial, stempel)
+  - name: Jobs
+    description: Progress tracking background job
+  - name: UU PDP
+    description: Hak subjek data (akses, koreksi, hapus)
+  - name: Admin
+    description: Administrasi platform (perlu role admin + MFA)
+
+security:
+  - BearerAuth: []
+
+paths:
+  # ============================================
+  # AUTH
+  # ============================================
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Registrasi akun baru
+      description: |
+        Mendaftarkan akun baru dengan email/password.
+        Akun tidak aktif sampai email diverifikasi.
+        Wajib menyetujui Privacy Policy.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Registrasi berhasil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterResponse"
+        "409":
+          $ref: "#/components/responses/EmailAlreadyExists"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimitExceeded"
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login dengan email & password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+        "403":
+          $ref: "#/components/responses/EmailNotVerified"
+        "423":
+          $ref: "#/components/responses/AccountLocked"
+        "429":
+          $ref: "#/components/responses/RateLimitExceeded"
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      description: |
+        Rotasi refresh token. Refresh token single-use.
+        Jika token lama dipakai ulang, seluruh token family di-revoke.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: Token baru
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "401":
+          description: Refresh token expired atau sudah dipakai
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/verify-email:
+    post:
+      tags: [Auth]
+      summary: Verifikasi email
+      description: Setelah verifikasi, user auto-login.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: Token dari link verifikasi
+      responses:
+        "200":
+          description: Email terverifikasi + auto-login
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/TokenExpired"
+
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request reset password
+      description: |
+        Selalu return 200 untuk mencegah email enumeration.
+        Jika email terdaftar, link reset dikirim ke email.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Request diterima
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "Jika email terdaftar, link reset akan dikirim"
+        "429":
+          $ref: "#/components/responses/RateLimitExceeded"
+
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password dengan token
+      description: Semua session di-revoke setelah reset.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 12
+      responses:
+        "200":
+          description: Password direset
+        "401":
+          $ref: "#/components/responses/TokenExpired"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /auth/oauth/google:
+    post:
+      tags: [Auth]
+      summary: Login dengan Google OAuth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id_token, state]
+              properties:
+                id_token:
+                  type: string
+                  description: Google ID token
+                state:
+                  type: string
+                  description: CSRF state parameter
+      responses:
+        "200":
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout
+      description: Revoke refresh token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "204":
+          description: Logout berhasil
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Profil user saat ini
+      responses:
+        "200":
+          description: Profil user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/UserProfile"
+        "401":
+          $ref:
+            "#/components/responses/Unauthorized"
+            # ============================================
+  # DOCUMENTS
+  # ============================================
+
+  /documents:
+    post:
+      tags: [Documents]
+      summary: Upload dokumen PDF
+      description: |
+        Validasi ketat: magic bytes, max 25MB, bukan encrypted,
+        tidak mengandung JavaScript/XFA/embedded file, ClamAV scan.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, workflow_type]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                name:
+                  type: string
+                  maxLength: 255
+                workflow_type:
+                  type: string
+                  enum: [personal, package, multi_signer]
+                package_id:
+                  type: string
+                  format: uuid
+                  description: Wajib jika workflow_type=package
+      responses:
+        "201":
+          description: Upload berhasil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Document"
+        "409":
+          $ref: "#/components/responses/DocumentDuplicate"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/DocumentInvalidFormat"
+        "429":
+          $ref: "#/components/responses/RateLimitExceeded"
+
+    get:
+      tags: [Documents]
+      summary: List dokumen user
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            description: Filter by status (comma-separated)
+        - name: workflow_type
+          in: query
+          schema:
+            type: string
+            enum: [personal, package, multi_signer]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List dokumen
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Document"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+
+  /documents/{id}:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    get:
+      tags: [Documents]
+      summary: Detail dokumen
+      responses:
+        "200":
+          description: Detail dokumen
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/DocumentDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Documents]
+      summary: Rename / update metadata
+      description: Hanya bisa jika status=draft.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+      responses:
+        "200":
+          description: Berhasil update
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Document"
+        "409":
+          description: Dokumen sudah ditandatangani
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [Documents]
+      summary: Soft delete ke trash
+      description: Retensi 30 hari sebelum hard delete.
+      responses:
+        "204":
+          description: Berhasil di-trash
+
+  /documents/{id}/permanent:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    delete:
+      tags: [Documents]
+      summary: Hard delete dokumen
+      description: Hanya bisa jika status=trashed. File dihapus dari S3, record dianonymize.
+      responses:
+        "204":
+          description: Berhasil dihapus permanen
+        "409":
+          description: Status bukan trashed
+
+  /documents/{id}/placements:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    put:
+      tags: [Documents]
+      summary: Update signature placements
+      description: Hanya bisa jika status=draft.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [placements]
+              properties:
+                placements:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/SignaturePlacementInput"
+      responses:
+        "200":
+          description: Placements updated
+        "422":
+          description: Validasi gagal (out of bounds, overlap, dll)
+
+  /documents/{id}/download:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    get:
+      tags: [Documents]
+      summary: Download dokumen final
+      description: Mengembalikan presigned URL (expire 15 menit).
+      responses:
+        "200":
+          description: Presigned URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      download_url:
+                        type: string
+                        format: uri
+                      expires_at:
+                        type: string
+                        format: date-time
+                      file_name:
+                        type: string
+        "409":
+          description: Dokumen belum signed/sealed
+
+  /documents/{id}/certificate:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    get:
+      tags: [Documents]
+      summary: Download sertifikat
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [merged, separated]
+            default: merged
+      responses:
+        "200":
+          description: Presigned URL sertifikat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      download_url:
+                        type: string
+                        format: uri
+                      expires_at:
+                        type: string
+                        format: date-time
+
+  /documents/{id}/versions:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    get:
+      tags: [Documents]
+      summary: Riwayat versi dokumen
+      responses:
+        "200":
+          description: List versi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref:
+                        "#/components/schemas/DocumentVersion"
+                        # ============================================
+  # PACKAGES
+  # ============================================
+
+  /packages:
+    post:
+      tags: [Packages]
+      summary: Buat paket baru
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, expires_at]
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                expires_at:
+                  type: string
+                  format: date-time
+      responses:
+        "201":
+          description: Paket dibuat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Package"
+    get:
+      tags: [Packages]
+      summary: List paket user
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List paket
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Package"
+
+  /packages/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PackageId"
+    get:
+      tags: [Packages]
+      summary: Detail paket + progress
+      responses:
+        "200":
+          description: Detail paket
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PackageDetail"
+    delete:
+      tags: [Packages]
+      summary: Batalkan paket
+      responses:
+        "204":
+          description: Paket dibatalkan
+
+  /packages/{id}/sessions:
+    parameters:
+      - $ref: "#/components/parameters/PackageId"
+    post:
+      tags: [Packages]
+      summary: Mulai sesi signing
+      responses:
+        "201":
+          description: Sesi dimulai
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      session_id:
+                        type: string
+                        format: uuid
+                      current_document_index:
+                        type: integer
+                      started_at:
+                        type: string
+                        format: date-time
+        "409":
+          description: Paket sudah aktif
+
+  /packages/{id}/sessions/{sessionId}/sign:
+    parameters:
+      - $ref: "#/components/parameters/PackageId"
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Packages]
+      summary: Tanda tangan dokumen dalam paket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document_id, placements, asset_id]
+              properties:
+                document_id:
+                  type: string
+                  format: uuid
+                placements:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/SignaturePlacementInput"
+                asset_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Dokumen ditandatangani
+        "409":
+          description: Urutan tidak sesuai
+
+  /packages/{id}/finalize:
+    parameters:
+      - $ref: "#/components/parameters/PackageId"
+    post:
+      tags: [Packages]
+      summary: Finalisasi paket
+      description: Memicu background job untuk sealing seluruh paket.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [otp_code, consent_given, consent_text_version]
+              properties:
+                otp_code:
+                  type: string
+                  pattern: '^\d{6}$'
+                consent_given:
+                  type: boolean
+                  enum: [true]
+                consent_text_version:
+                  type: string
+                  example: v1.0
+      responses:
+        "202":
+          description: Finalisasi diproses
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      job_id:
+                        type: string
+                      status:
+                        type: string
+                        example: processing
+        "401":
+          $ref: "#/components/responses/OTPInvalid"
+        "422":
+          description:
+            Masih ada dokumen belum di-sign
+            # ============================================
+  # SIGNING
+  # ============================================
+
+  /documents/{id}/sign:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    post:
+      tags: [Signing]
+      summary: Personal signing
+      description: Tanda tangan dokumen personal (self-signing).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignRequest"
+      responses:
+        "202":
+          description: Signing diproses
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      job_id:
+                        type: string
+                      status:
+                        type: string
+        "401":
+          $ref: "#/components/responses/OTPInvalid"
+        "409":
+          description: Dokumen sudah ditandatangani
+
+  /documents/{id}/signing-requests:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    post:
+      tags: [Signing]
+      summary: Buat undangan multi-signer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signers, expires_at, initiator_signs]
+              properties:
+                signers:
+                  type: array
+                  maxItems: 5
+                  items:
+                    type: object
+                    required: [email, sequence_order]
+                    properties:
+                      email:
+                        type: string
+                        format: email
+                      sequence_order:
+                        type: integer
+                        minimum: 1
+                        maximum: 6
+                expires_at:
+                  type: string
+                  format: date-time
+                initiator_signs:
+                  type: boolean
+                initiator_sequence:
+                  type: integer
+                  nullable: true
+      responses:
+        "201":
+          description: Undangan dibuat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SigningRequestsResponse"
+        "422":
+          description: Validasi gagal (max signer, duplicate email, dll)
+    get:
+      tags: [Signing]
+      summary: Status semua signer per dokumen
+      responses:
+        "200":
+          description: Status signer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      document_id:
+                        type: string
+                        format: uuid
+                      signers:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SignerStatus"
+    delete:
+      tags: [Signing]
+      summary: Cancel all signing requests
+      description: Revoke semua pending/viewed. Dokumen kembali ke draft.
+      responses:
+        "200":
+          description: Berhasil di-cancel
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      revoked_count:
+                        type: integer
+
+  /signing-requests/pending:
+    get:
+      tags: [Signing]
+      summary: List undangan aktif untuk user
+      responses:
+        "200":
+          description: List undangan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PendingInvitation"
+
+  /signing-requests/{id}/otp:
+    parameters:
+      - $ref: "#/components/parameters/SigningRequestId"
+    post:
+      tags: [Signing]
+      summary: Request OTP untuk signing
+      responses:
+        "200":
+          description: OTP terkirim
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                      expires_in:
+                        type: integer
+                        example: 300
+        "429":
+          description: Melebihi batas percobaan
+
+  /signing-requests/{id}/sign:
+    parameters:
+      - $ref: "#/components/parameters/SigningRequestId"
+    post:
+      tags: [Signing]
+      summary: Eksekusi tanda tangan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignRequest"
+      responses:
+        "200":
+          description: Tanda tangan berhasil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: signed
+                      signed_at:
+                        type: string
+                        format: date-time
+        "401":
+          $ref: "#/components/responses/OTPInvalid"
+        "409":
+          description: Sudah ditandatangani / sudah ditolak
+        "410":
+          description: Undangan kedaluwarsa
+
+  /signing-requests/{id}/decline:
+    parameters:
+      - $ref: "#/components/parameters/SigningRequestId"
+    post:
+      tags: [Signing]
+      summary: Tolak undangan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+      responses:
+        "200":
+          description: Undangan ditolak
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: declined
+                      declined_at:
+                        type: string
+                        format: date-time
+
+  /signing-requests/{id}:
+    parameters:
+      - $ref: "#/components/parameters/SigningRequestId"
+    delete:
+      tags: [Signing]
+      summary: Hapus signer dari daftar
+      description: Hanya untuk status declined/expired. Auto-trigger signer berikutnya.
+      responses:
+        "200":
+          description: Signer dihapus
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      removed:
+                        type: boolean
+                      next_signer_triggered:
+                        type: boolean
+        "409":
+          description:
+            Status bukan declined/expired
+            # ============================================
+  # VERIFICATION
+  # ============================================
+
+  /verify:
+    post:
+      tags: [Verification]
+      summary: Verifikasi dokumen
+      description: |
+        Verifikasi publik tanpa login.
+        File diproses di browser (client-side hash), hanya hash yang dikirim.
+        Dilindungi Cloudflare Turnstile.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document_id, hash, turnstile_token]
+              properties:
+                document_id:
+                  type: string
+                  format: uuid
+                hash:
+                  type: string
+                  pattern: "^[a-f0-9]{64}$"
+                turnstile_token:
+                  type: string
+                verify_token:
+                  type: string
+                  description: Opsional untuk jalur QR
+      responses:
+        "200":
+          description: Hasil verifikasi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/VerificationResult"
+        "404":
+          $ref: "#/components/responses/VerifyNotRegistered"
+        "410":
+          $ref: "#/components/responses/VerifyLinkExpired"
+        "422":
+          description: Turnstile gagal
+        "429":
+          $ref: "#/components/responses/RateLimitExceeded"
+
+  /verify/qr/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Verification]
+      summary: Verifikasi via QR code
+      security: []
+      responses:
+        "200":
+          description: Hasil verifikasi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/VerificationResult"
+        "410":
+          $ref: "#/components/responses/VerifyLinkExpired"
+
+  /public-keys/ca:
+    get:
+      tags: [Verification]
+      summary: Public key CA internal
+      security: []
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [pem, jwk]
+            default: pem
+      responses:
+        "200":
+          description: Public key CA
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      root_ca:
+                        type: string
+                      intermediate_ca:
+                        type: string
+                      format:
+                        type: string
+                      expires_at:
+                        type: string
+                        format: date-time
+
+  /crl:
+    get:
+      tags: [Verification]
+      summary: Certificate Revocation List
+      security: []
+      responses:
+        "200":
+          description: CRL dalam format DER X.509
+          content:
+            application/pkix-crl:
+              schema:
+                type: string
+                format:
+                  binary
+                  # ============================================
+  # ASSETS
+  # ============================================
+
+  /assets:
+    get:
+      tags: [Assets]
+      summary: List aset user
+      responses:
+        "200":
+          description: List aset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SignatureAsset"
+    post:
+      tags: [Assets]
+      summary: Upload/create aset
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [type, file]
+              properties:
+                type:
+                  type: string
+                  enum: [signature, initial, stamp]
+                label:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Aset dibuat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SignatureAsset"
+
+  /assets/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [Assets]
+      summary: Update label / set default
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                is_default:
+                  type: boolean
+      responses:
+        "200":
+          description: Aset diupdate
+    delete:
+      tags: [Assets]
+      summary: Hapus aset (soft delete)
+      responses:
+        "204":
+          description: Aset dihapus
+
+  # ============================================
+  # JOBS
+  # ============================================
+
+  /jobs/{id}/progress:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Jobs]
+      summary: Progress job
+      responses:
+        "200":
+          description: Progress job
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      job_id:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          [
+                            available,
+                            running,
+                            completed,
+                            retrying,
+                            discarded,
+                            cancelled,
+                          ]
+                      progress_percent:
+                        type: integer
+                        minimum: 0
+                        maximum: 100
+                      updated_at:
+                        type: string
+                        format: date-time
+
+  # ============================================
+  # UU PDP
+  # ============================================
+
+  /users/me/data:
+    get:
+      tags: [UU PDP]
+      summary: Right to access — lihat data pribadi
+      responses:
+        "200":
+          description: Data pribadi user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDataExport"
+    put:
+      tags: [UU PDP]
+      summary: Right to correction — koreksi data
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                phone:
+                  type: string
+      responses:
+        "200":
+          description: Data dikoreksi
+
+  /users/me/deletion-request:
+    post:
+      tags: [UU PDP]
+      summary: Right to erasure — hapus akun
+      description: Grace period 14 hari sebelum anonymization.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        "202":
+          description: Permintaan diterima
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      request_id:
+                        type: string
+                        format: uuid
+                      grace_period_ends_at:
+                        type: string
+                        format: date-time
+                      message:
+                        type: string
+
+  # ============================================
+  # ADMIN
+  # ============================================
+
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List user
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [admin, user]
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/UserProfile"
+
+  /admin/users/{id}/suspend:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [Admin]
+      summary: Suspensi user
+      security:
+        - BearerAuth: []
+        - MFAHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: User disuspend
+
+  /admin/users/{id}/activate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [Admin]
+      summary: Aktivasi user
+      responses:
+        "200":
+          description: User diaktivasi
+
+  /admin/users/{id}/anonymize:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [Admin]
+      summary: Anonymize user (dual control)
+      security:
+        - BearerAuth: []
+        - MFAHeader: []
+      responses:
+        "202":
+          description: Menunggu approval admin kedua
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      approval_id:
+                        type: string
+                        format: uuid
+                      status:
+                        type: string
+                        example: pending_approval
+                      expires_at:
+                        type: string
+                        format: date-time
+
+  /admin/dashboard:
+    get:
+      tags: [Admin]
+      summary: Statistik sistem
+      responses:
+        "200":
+          description: Statistik
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      total_users:
+                        type: integer
+                      total_documents:
+                        type: integer
+                      total_signing_jobs:
+                        type: integer
+                      active_signing_jobs:
+                        type: integer
+                      system_status:
+                        type: string
+                      error_rate_24h:
+                        type: number
+
+  /admin/audit-trail/export:
+    get:
+      tags: [Admin]
+      summary: Export audit trail
+      security:
+        - BearerAuth: []
+        - MFAHeader: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+      responses:
+        "200":
+          description: Presigned URL untuk export
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      export_url:
+                        type: string
+                        format: uri
+                      signature:
+                        type: string
+                      expires_at:
+                        type: string
+                        format: date-time
+                      hash_chain_verified:
+                        type: boolean
+
+  /admin/documents/{id}/force-seal:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    post:
+      tags: [Admin]
+      summary: Force seal dokumen (dual control)
+      security:
+        - BearerAuth: []
+        - MFAHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, approval_id]
+              properties:
+                reason:
+                  type: string
+                approval_id:
+                  type: string
+                  format: uuid
+      responses:
+        "202":
+          description: Force seal diproses
+
+  /admin/reports:
+    get:
+      tags: [Admin]
+      summary: List user reports
+      responses:
+        "200":
+          description: List reports
+
+  /admin/reports/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [Admin]
+      summary: Resolve report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, resolution_note]
+              properties:
+                status:
+                  type: string
+                  enum: [resolved, rejected]
+                resolution_note:
+                  type: string
+      responses:
+        "200":
+          description: Report diupdate
+
+  /admin/breach-notification:
+    post:
+      tags: [Admin]
+      summary: Trigger notifikasi kebocoran data (dual control)
+      security:
+        - BearerAuth: []
+        - MFAHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [incident_code, severity, description]
+              properties:
+                incident_code:
+                  type: string
+                severity:
+                  type: string
+                  enum: [low, medium, high, critical]
+                description:
+                  type: string
+                affected_data_types:
+                  type: array
+                  items:
+                    type: string
+                affected_user_count:
+                  type: integer
+                notify_authority:
+                  type: boolean
+                notify_subjects:
+                  type: boolean
+      responses:
+        "202":
+          description: Notifikasi di-queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      incident_id:
+                        type: string
+                        format: uuid
+                      status:
+                        type: string
+                      authority_notification_eta:
+                        type: string
+                        format: date-time
+
+# ============================================
+# COMPONENTS
+# ============================================
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT access token. Format: `Authorization: Bearer <token>`.
+        Access token TTL: 15 menit.
+    MFAHeader:
+      type: apiKey
+      in: header
+      name: X-MFA-Code
+      description: TOTP code untuk admin actions. Format 6 digit.
+
+  parameters:
+    DocumentId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PackageId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SigningRequestId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    # -------- Auth --------
+    RegisterRequest:
+      type: object
+      required: [email, password, full_name, privacy_policy_version]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          example: user@example.com
+        password:
+          type: string
+          minLength: 12
+          example: SecureP@ss123
+        full_name:
+          type: string
+          minLength: 2
+          maxLength: 255
+          example: Andi Wijaya
+        privacy_policy_version:
+          type: string
+          example: v1.0
+        invite_token:
+          type: string
+          description: Untuk registrasi via undangan multi-signer
+
+    RegisterResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            user_id:
+              type: string
+              format: uuid
+            email:
+              type: string
+            status:
+              type: string
+              example: pending_verification
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    LoginResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            access_token:
+              type: string
+            refresh_token:
+              type: string
+            expires_in:
+              type: integer
+              example: 900
+            user:
+              $ref: "#/components/schemas/UserProfile"
+
+    TokenPair:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            access_token:
+              type: string
+            refresh_token:
+              type: string
+            expires_in:
+              type: integer
+
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        full_name:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+        status:
+          type: string
+          enum: [pending, active, suspended, anonymized]
+        email_verified:
+          type: boolean
+        assurance_level:
+          type: integer
+          minimum: 1
+          maximum: 3
+        created_at:
+          type: string
+          format: date-time
+
+    # -------- Document --------
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        workflow_type:
+          type: string
+          enum: [personal, package, multi_signer]
+        status:
+          type: string
+          enum:
+            [
+              draft,
+              pending_signature,
+              awaiting_signers,
+              partially_signed,
+              signed,
+              sealed,
+              expired,
+              trashed,
+              deleted,
+            ]
+        original_hash:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        current_hash:
+          type: string
+        final_hash:
+          type: string
+          nullable: true
+        file_size_bytes:
+          type: integer
+        total_pages:
+          type: integer
+        current_version:
+          type: string
+          example: v1.0
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        signed_at:
+          type: string
+          format: date-time
+          nullable: true
+        sealed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DocumentDetail:
+      allOf:
+        - $ref: "#/components/schemas/Document"
+        - type: object
+          properties:
+            signing_requests:
+              type: array
+              items:
+                $ref: "#/components/schemas/SignerStatus"
+
+    DocumentVersion:
+      type: object
+      properties:
+        version:
+          type: string
+        major:
+          type: integer
+        minor:
+          type: integer
+        hash:
+          type: string
+        change_type:
+          type: string
+          enum: [metadata, signing, sealing]
+        created_at:
+          type: string
+          format: date-time
+
+    SignaturePlacementInput:
+      type: object
+      required:
+        [
+          signer_email,
+          page_number,
+          x_percent,
+          y_percent,
+          width_percent,
+          height_percent,
+          placement_type,
+        ]
+      properties:
+        signer_email:
+          type: string
+          format: email
+        page_number:
+          type: integer
+          minimum: 1
+        x_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+        y_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+        width_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+        height_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+        placement_type:
+          type: string
+          enum: [signature, initial, date, stamp]
+        sequence_order:
+          type: integer
+          nullable: true
+
+    # -------- Package --------
+    Package:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum: [draft, active, completed, expired, cancelled]
+        total_documents:
+          type: integer
+          maximum: 20
+        expires_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    PackageDetail:
+      allOf:
+        - $ref: "#/components/schemas/Package"
+        - type: object
+          properties:
+            documents:
+              type: array
+              items:
+                $ref: "#/components/schemas/Document"
+            session:
+              type: object
+              nullable: true
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                current_document_index:
+                  type: integer
+                status:
+                  type: string
+
+    # -------- Signing --------
+    SignRequest:
+      type: object
+      required:
+        [otp_code, consent_given, consent_text_version, asset_id, placement_id]
+      properties:
+        otp_code:
+          type: string
+          pattern: '^\d{6}$'
+          example: "123456"
+        consent_given:
+          type: boolean
+          enum: [true]
+        consent_text_version:
+          type: string
+          example: v1.0
+        asset_id:
+          type: string
+          format: uuid
+        placement_id:
+          type: string
+          format: uuid
+
+    SigningRequestsResponse:
+      type: object
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: awaiting_signers
+        signing_requests:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              signer_email:
+                type: string
+              sequence_order:
+                type: integer
+              status:
+                type: string
+
+    SignerStatus:
+      type: object
+      properties:
+        sequence_order:
+          type: integer
+        signer_email:
+          type: string
+          description: Masked email (a***@example.com)
+        status:
+          type: string
+          enum: [pending, viewed, signed, declined, expired, revoked]
+        signed_at:
+          type: string
+          format: date-time
+          nullable: true
+        declined_at:
+          type: string
+          format: date-time
+          nullable: true
+        decline_reason:
+          type: string
+          nullable: true
+
+    PendingInvitation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        document:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+        initiator_name:
+          type: string
+        sequence_order:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+
+    # -------- Verification --------
+    VerificationResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [valid, invalid]
+        reason:
+          type: string
+          nullable: true
+          example: hash_mismatch
+        message:
+          type: string
+          nullable: true
+        document_id:
+          type: string
+          format: uuid
+        final_hash:
+          type: string
+        workflow_type:
+          type: string
+        total_pages:
+          type: integer
+        signed_at:
+          type: string
+          format: date-time
+        sealed_at:
+          type: string
+          format: date-time
+        assurance_level:
+          type: integer
+        signers:
+          type: array
+          items:
+            type: object
+            properties:
+              sequence_order:
+                type: integer
+              name:
+                type: string
+              email:
+                type: string
+                description: Masked
+              status:
+                type: string
+              signed_at:
+                type: string
+                format: date-time
+              assurance_level:
+                type: integer
+
+    # -------- Asset --------
+    SignatureAsset:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [signature, initial, stamp]
+        label:
+          type: string
+        file_path:
+          type: string
+        file_hash:
+          type: string
+        is_default:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    # -------- UU PDP --------
+    UserDataExport:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            profile:
+              $ref: "#/components/schemas/UserProfile"
+            documents:
+              type: array
+              items:
+                $ref: "#/components/schemas/Document"
+            assets:
+              type: array
+              items:
+                $ref: "#/components/schemas/SignatureAsset"
+            consents:
+              type: array
+              items:
+                type: object
+            audit_logs:
+              type: array
+              items:
+                type: object
+
+    # -------- Common --------
+    Pagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+            request_id:
+              type: string
+              format: uuid
+
+  responses:
+    Unauthorized:
+      description: Tidak terautentikasi
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: AUTH_TOKEN_INVALID
+              message: Token tidak valid
+
+    TokenExpired:
+      description: Token expired
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    InvalidCredentials:
+      description: Kredensial salah
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: AUTH_INVALID_CREDENTIALS
+              message: Email atau password salah
+
+    EmailNotVerified:
+      description: Email belum diverifikasi
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    AccountLocked:
+      description: Akun terkunci sementara
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    EmailAlreadyExists:
+      description: Email sudah terdaftar
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: EMAIL_ALREADY_EXISTS
+              message: Email sudah terdaftar
+
+    ValidationError:
+      description: Validasi request gagal
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    DocumentInvalidFormat:
+      description: File bukan PDF valid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: DOCUMENT_INVALID_FORMAT
+              message: File bukan PDF yang valid
+              details:
+                field: file
+                reason: magic_bytes_mismatch
+
+    DocumentDuplicate:
+      description: Dokumen duplikat
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    PayloadTooLarge:
+      description: File terlalu besar (>25MB)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    OTPInvalid:
+      description: OTP salah/expired
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    VerifyNotRegistered:
+      description: Dokumen tidak terdaftar
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    VerifyLinkExpired:
+      description: Link QR kedaluwarsa
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    RateLimitExceeded:
+      description: Melebihi rate limit
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Detik sampai bisa request lagi
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    NotFound:
+      description: Resource tidak ditemukan
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"

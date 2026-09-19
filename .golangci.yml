@@ -1,0 +1,59 @@
+# golangci-lint configuration
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck
+    - gosec
+    - revive
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - bodyclose
+    - noctx
+    - sqlclosecheck
+    - rowserrcheck
+    - exportloopref
+    - prealloc
+    - gocritic
+    - nilerr
+
+linters-settings:
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+  gosec:
+    excludes:
+      - G101  # hard-coded credentials (false positive di test)
+  revive:
+    rules:
+      - name: exported
+        disabled: true
+  gofmt:
+    simplify: true
+  gocritic:
+    disabled-checks:
+      - hugeParam
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 10
+  exclude-dirs:
+    - internal/infrastructure/postgres/sqlc
+    - mocks
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck

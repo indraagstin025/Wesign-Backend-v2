@@ -1,0 +1,48 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+go.work
+go.work.sum
+vendor/
+coverage.out
+coverage.html
+*.test
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+!deployments/k8s/*.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Air (hot reload)
+tmp/
+
+# Generated
+internal/infrastructure/postgres/sqlc/
+mocks/
+docs/erd/*.png
+docs/erd/*.svg
+
+# Test artifacts
+tests/e2e/results/
+*.log
+
+docs/

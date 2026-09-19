@@ -1,0 +1,17 @@
+.git
+.github
+.vscode
+.idea
+bin/
+dist/
+tmp/
+docs/
+tests/
+scripts/
+deployments/
+api/
+.env
+.env.*
+*.md
+coverage.out
+coverage.html

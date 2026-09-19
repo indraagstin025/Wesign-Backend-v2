@@ -1,0 +1,71 @@
+# WeSign Backend — Development docker-compose
+version: "3.9"
+
+services:
+  # ── PostgreSQL 16 ──────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: wesign-postgres
+    environment:
+      POSTGRES_USER: wesign
+      POSTGRES_PASSWORD: wesign_secret
+      POSTGRES_DB: wesign
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wesign"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis 7 ────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: wesign-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── MinIO (S3-compatible) ──────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: wesign-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  # ── Mailpit (SMTP dev) ─────────────────────────────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: wesign-mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # ── ClamAV ─────────────────────────────────────────────────
+  clamav:
+    image: clamav/clamav:latest
+    container_name: wesign-clamav
+    ports:
+      - "3310:3310"
+    profiles:
+      - full
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
