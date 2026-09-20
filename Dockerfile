@@ -17,7 +17,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/worker ./cmd/worker
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/migrate ./cmd/migrate
+# Fase 2: RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/migrate ./cmd/migrate
 
 # ── Runtime stage ────────────────────────────────────────────
 FROM alpine:3.20
@@ -29,7 +29,7 @@ WORKDIR /app
 
 COPY --from=builder /bin/api /app/api
 COPY --from=builder /bin/worker /app/worker
-COPY --from=builder /bin/migrate /app/migrate
+# Fase 2: COPY --from=builder /bin/migrate /app/migrate
 COPY --from=builder /app/migrations /app/migrations
 
 USER appuser

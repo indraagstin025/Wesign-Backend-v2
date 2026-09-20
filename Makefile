@@ -24,7 +24,7 @@ worker: ## Jalankan background worker
 build: ## Build semua binary
 	$(GO) build -o $(BINARY_DIR)/api.exe ./cmd/api
 	$(GO) build -o $(BINARY_DIR)/worker.exe ./cmd/worker
-	$(GO) build -o $(BINARY_DIR)/migrate.exe ./cmd/migrate
+	# Fase 2: $(GO) build -o $(BINARY_DIR)/migrate.exe ./cmd/migrate  (aktifkan setelah cmd/migrate tersedia)
 
 tidy: ## go mod tidy
 	$(GO) mod tidy
@@ -47,7 +47,7 @@ coverage: ## Test dengan coverage report
 	$(GO) test ./... -coverprofile=coverage.out
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
-# ── Database ─────────────────────────────────────────────────
+# ── Database (membutuhkan cmd/migrate — tersedia pada Fase 2) ─
 
 migrate-up: ## Jalankan semua migration
 	$(GO) run ./cmd/migrate up
@@ -78,7 +78,7 @@ clean: ## Hapus build artifacts
 	rm -rf $(BINARY_DIR) tmp coverage.out coverage.html
 
 seed: ## Seed development data
-	bash scripts/seed.sh
+	echo 'seed belum tersedia — dijadwalkan pada Fase 12 (Test Data Management)'; exit 1
 
 help: ## Tampilkan bantuan
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'

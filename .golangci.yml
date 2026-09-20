@@ -1,4 +1,9 @@
-# golangci-lint configuration
+# ═══════════════════════════════════════════════════════════
+# golangci-lint configuration — SKEMA v2 (golangci-lint v2.x)
+# Menegakkan TDD §2.2 (dependency rule) & TDD §11.3.1 (CI)
+# ═══════════════════════════════════════════════════════════
+version: "2"
+
 run:
   timeout: 5m
   tests: true
@@ -10,50 +15,65 @@ linters:
     - govet
     - staticcheck
     - unused
-    - gosimple
     - ineffassign
-    - typecheck
     - gosec
     - revive
-    - gofmt
-    - goimports
     - misspell
     - unconvert
     - bodyclose
     - noctx
     - sqlclosecheck
     - rowserrcheck
-    - exportloopref
     - prealloc
     - gocritic
     - nilerr
+    - copyloopvar
+    - depguard
 
-linters-settings:
-  govet:
-    enable-all: true
-    disable:
-      - fieldalignment
-  gosec:
-    excludes:
-      - G101  # hard-coded credentials (false positive di test)
-  revive:
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    gosec:
+      excludes:
+        - G101 # hard-coded credentials (false positive di test)
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+
+    # ── Dependency rule (TDD §2.2) ──────────────────────────
+    # Domain tidak boleh bergantung pada layer mana pun.
+    # Use Case hanya boleh bergantung pada Domain dan pkg.
+    depguard:
+      rules:
+        domain-layer-must-be-pure:
+          files:
+            - "**/internal/domain/**"
+          allow:
+            - $gostd
+            - github.com/google/uuid
+        usecase-layer-must-not-depend-on-transport-or-driver:
+          files:
+            - "**/internal/usecase/**"
+          allow:
+            - $gostd
+            - github.com/google/uuid
+            - github.com/wesign/wesign-backend/internal/domain
+            - github.com/wesign/wesign-backend/pkg
+
+  exclusions:
+    paths:
+      - internal/infrastructure/postgres/sqlc
+      - mocks
     rules:
-      - name: exported
-        disabled: true
-  gofmt:
-    simplify: true
-  gocritic:
-    disabled-checks:
-      - hugeParam
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
 
-issues:
-  max-issues-per-linter: 50
-  max-same-issues: 10
-  exclude-dirs:
-    - internal/infrastructure/postgres/sqlc
-    - mocks
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gosec
-        - errcheck
+formatters:
+  enable:
+    - gofmt
+    - goimports

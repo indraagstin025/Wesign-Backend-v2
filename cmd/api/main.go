@@ -67,12 +67,14 @@ func main() {
 	logger.Info("shutting down server...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
 	if err := app.ShutdownWithContext(ctx); err != nil {
+		cancel()
 		logger.Error("shutdown error", "error", err)
 		os.Exit(1)
 	}
+
+	cancel()
 
 	logger.Info("server stopped")
 }
@@ -115,12 +117,14 @@ func recoveryMiddleware() fiber.Handler {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("panic recovered", "error", r, "path", c.Path())
-				c.Status(500).JSON(fiber.Map{
+				if err := c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 					"error": fiber.Map{
 						"code":    "INTERNAL_ERROR",
 						"message": "Internal server error",
 					},
-				})
+				}); err != nil {
+					slog.Error("failed to write error response", "error", err)
+				}
 			}
 		}()
 		return c.Next()

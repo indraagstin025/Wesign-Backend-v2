@@ -1,0 +1,15 @@
+# ═══════════════════════════════════════════════════════════
+# Ambang batas coverage CI — TDD §12.7
+# Dijalankan oleh go-test-coverage (lihat TDD §11.3.1)
+# ═══════════════════════════════════════════════════════════
+
+threshold:
+  file: 70
+  package: 75
+  total: 80
+
+exclude:
+  paths:
+    - cmd/
+    - internal/infrastructure/postgres/sqlc/
+    - tests/
